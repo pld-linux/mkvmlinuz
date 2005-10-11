@@ -1,0 +1,11 @@
+# mkvmlinuz configuration
+
+# force subarchitecture
+#arch=miboot
+
+# don't use initrd
+#initrd=no
+
+# use different ld and objcopy
+#LD=ppc-pld-linux-ld
+#OBJCOPY=ppc-pld-linux-objcopy
