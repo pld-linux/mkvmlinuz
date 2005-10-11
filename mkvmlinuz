@@ -1,0 +1,337 @@
+#!/bin/sh
+
+# $Id$
+# mkvmlinuz for pld linux
+#
+# based on mkvmlinuz from Debian and Linux kernel Makefiles
+
+
+# usage information
+usage() {
+	cat << EOF
+usage: $(basename $0) [options] <output-image> <kernel-version>
+(ex: $(basename $0) /boot/zImage-2.6.13.3-1.pmac 2.6.13.3-1)  
+
+<output-image>   - path to output file for compressed kernel image
+<kernel-version> - kernel version-release
+
+options:
+ -a <arch>   - PowerPC sub-architecture
+ -v <kernel> - path to vmlinux kernel
+               default: /boot/vmlinux-<kernel-version>
+ -i <initrd> - path to initrd image file
+               default: /boot/initrd-<kernel-version>[.gz]
+               geninitrd will be executed if no initrd file and not specified
+ -l <libdir> - path to directory with kernel libraries
+               default: /boot/libs-<kernel-version>/
+ -kb         - specify if using kernel build directory as <libdir>
+ -n          - do not use an initrd
+ -f          - force
+ -V          - verbose operation
+ -D          - debug (set -x)
+
+EOF
+
+exit
+}
+
+error() {
+	MSG="$*"
+	echo "$(basename $0): ERROR: ${MSG#$1 }" >&2
+	exit $1
+}
+
+err() {
+	cd /
+	rm -rf $workdir
+	echo "ERROR: Some error has ocurred"
+	exit $(($1+30))
+}
+
+. /etc/rc.d/init.d/functions
+if [ -r /etc/sysconfig/mkvmlinuz ] ; then
+	. /etc/sysconfig/mkvmlinuz
+fi
+
+is_yes "$DEBUG" && set -x
+
+output=
+version=
+
+# parse command line
+while [ -n "$1" ]; do
+	case "$1" in
+		-a|--arch)
+			shift
+			arch=$1
+			;;
+		-v|--vmlinux)
+			shift
+			vmlinux=$1
+			;;
+		-i|--initrd)
+			shift
+			initrd=$1
+			;;
+		-l|--libdir)
+			shift
+			libdir=$1
+			;;
+		-kb|--kb)
+			libdirsuf="/arch/ppc/boot"
+			kernellib="../../../lib/lib.a"
+			;;
+		-n|--noinitrd)
+			initrd="no"
+			;;
+		-f|--force)
+			force="yes"
+			;;
+		-V|--verbose)
+			verbose="yes"
+			;;
+		-D|--debug)
+			DEBUG="yes"
+			;;
+		-*)
+			usage
+			;;
+		*)
+			if [ -z "$output" ]; then
+				output=$1
+			elif [ -z "$version" ]; then
+				version=$1
+			else
+				usage
+			fi				
+			;;
+	esac
+	shift
+done
+[ -z "$version" ] && usage
+[ -n "$libdir" ] && libdir="$libdir$libdirsuf"
+
+is_yes "$DEBUG" && set -x
+
+# check everything
+if [ -e "$output" ]; then
+	is_yes "$force" || error 1 "$output exists"
+fi
+
+[ -r "/lib/modules/$version" ] || \
+	echo "WARNING: kernel $version is not properly installed" >&2
+is_yes "$verbose" && echo "=== Preparing kernel version $version."
+
+# if no sub-architecture was specified, read it from /proc
+if [ -z "$arch" ]; then
+	case $(grep ^machine /proc/cpuinfo) in
+		*PReP*Blackhawk*) arch=ppcbug ;;
+		*PReP*) arch=prep ;;
+		*CHRP*) arch=chrp ;;
+		*)
+			case $(grep ^pmac-generation /proc/cpuinfo) in
+				*NewWorld) arch=newworld ;;
+				*OldWorld) arch=coff ;;
+			esac
+		;;
+	esac
+fi
+[ -z "$arch" ] && error 2 "Can't guess arch, specify one manually"
+is_yes "$verbose" && echo "=== Building for sub-architecture $arch."
+
+# if no kernel was specified, try to find one
+[ -z "$vmlinux" ] && vmlinux=/boot/vmlinux-$version
+[ -r "$vmlinux" ] || error 3 "vmlinux \`$vmlinux' is not readable"
+is_yes "$verbose" && echo "=== Using kernel image file $vmlinux."
+
+if is_no "$initrd"; then
+	initrd=
+	is_yes "$verbose" && echo "=== Not using initrd."
+else
+	if [ -z "$initrd" ]; then
+		initrd=/boot/initrd-$version
+		[ -r "$initrd" ] || initrd=/boot/initrd-$version.gz
+		if ! [ -r "$initrd" ]; then
+			[ -r "/lib/modules/$version" ] || \
+				error 4 "Can't find initrd and can't create it"
+			# initrd was not specified and don't exist so create it
+			is_yes "$verbose" && echo "=== Calling geninitrd \`$initrd $version'."
+			geninitrd "$initrd" "$version" || error 10 "geninitrd failed"
+		fi
+	fi
+	[ -r "$initrd" ] || error 4 "initrd \`$initrd\' is not readable"
+	is_yes "$verbose" && echo "=== Using initrd image file $initrd."
+fi
+
+# if no object file directory was specified, try to find one
+[ -z "$libdir" ] && libdir=/boot/libs-$version
+[ -r "$libdir" ] || error 5 "libdir \`$libdir' is not readable"
+is_yes "$verbose" && echo "=== Using object files from $libdir."
+
+is_yes "$verbose" && \
+	echo "=== Building a bootable compressed kernel image in $output."
+
+CROSSPPC=
+[ "$(uname -m)" = "ppc" ] || CROSSPPC="ppc-pld-linux-"
+
+# utilities
+[ -z "$ADDNOTE" ] && ADDNOTE=$libdir/utils/addnote
+[ -z "$HACKCOFF" ] && HACKCOFF=$libdir/utils/hack-coff
+[ -z "$MKNOTE" ] && MKNOTE=$libdir/utils/mknote
+[ -z "$MKPREP" ] && MKPREP=$libdir/utils/mkprep
+[ -z "$MKBUGBOOT" ] && MKBUGBOOT=$libdir/utils/mkbugboot
+
+[ -z "$LD" ] && LD=${CROSSPPC}ld
+[ -z "$OBJCOPY" ] && OBJCOPY=${CROSSPPC}objcopy
+
+# libraries and common object files
+OFCOMMONOBJS="start.o,misc.o,common.o"
+[ -z "$kernellib" ] && kernellib=kernel/lib.a
+LIBS=$(echo $libdir/{$kernellib,lib/lib.a,of1275/lib.a,common/lib.a})
+case "$arch" in
+	prep|ppcbug)
+		OBJS=$(echo $libdir/simple/{head.o,relocate.o,prepmap.o,misc.o,misc-prep.o,mpc10x_memory.o})
+		LIBS=$(echo $libdir/{common/lib.a,lib/lib.a,of1275/lib.a})
+		dummy=$libdir/simple/dummy.o
+		;;
+	newworld|chrp)
+		OBJS=$(echo $libdir/openfirmware/{crt0.o,$OFCOMMONOBJS,${arch}main.o})
+		dummy=$libdir/openfirmware/dummy.o
+		;;
+	coff)
+		OBJS=$(echo $libdir/openfirmware/{coffcrt0.o,$OFCOMMONOBJS,${arch}main.o})
+		dummy=$libdir/openfirmware/dummy.o
+		;;
+	miboot)
+		dummy=$libdir/openfirmware/dummy.o
+		;;
+	*)
+		error 20 "Unrecognized arch $arch"
+		;;	
+esac
+
+# create a work directory
+workdir="$(mktemp -d "/tmp/$(basename $0)-XXXXXX")"
+[ -z "$workdir" ] && error 7 "work directory not created"
+
+# off we go...
+GZIP_FLAGS="--force --best"
+
+# create the compressed kernel image file
+is_yes "$verbose" && echo "=== Creating compressed kernel image vmlinux.bin.gz..."
+$OBJCOPY -O binary $vmlinux $workdir/vmlinux.bin
+gzip $GZIP_FLAGS $workdir/vmlinux.bin
+
+# create the compressed initrd image file
+if [ -n "$initrd" ]; then
+	is_yes "$verbose" && echo "=== Preparing compressed initrd image initrd.gz..."
+	# make sure it is like we need
+	gunzip "$initrd" -c > $workdir/initrd 2>/dev/null || \
+		cat "$initrd" > $workdir/initrd
+	gzip $GZIP_FLAGS $workdir/initrd
+fi
+
+
+if [ "$arch" = "miboot" ]; then
+	is_yes "$verbose" && echo "=== Preparing miboot ELF image..."
+	OBJCOPY_ARGS="-O aixcoff-rs6000 -R .stab -R .stabstr -R .comment"
+	$OBJCOPY $OBJCOPY_ARGS $dummy $workdir/image.o \
+		--add-section=image=$workdir/vmlinux.bin.gz
+	if [ -r $workdir/initrd.gz ]; then
+		$OBJCOPY $OBJCOPY_ARGS $workdir/image.o $workdir/image.o \
+			--add-section=initrd=$workdir/initrd.gz
+	fi
+	if [ -r "$workdir/image.o" ]; then
+		is_yes "$verbose" && echo "=== Moving kernel image file to $output..."
+		cat $workdir/image.o > $output && \
+			echo "*** kernel saved in $output succesfully ***" || \
+			err 21
+			
+		is_yes "$verbose" && echo "=== Cleaning up..."
+		rm -rf $workdir
+	fi						
+fi
+
+RMSECT=
+
+is_yes "$verbose" && echo "=== Putting everything into ELF image file image.o..."
+$OBJCOPY -O elf32-powerpc -R .comment $dummy $workdir/image.o
+$OBJCOPY -O elf32-powerpc $workdir/image.o $workdir/image.o \
+	--add-section=.image=$workdir/vmlinux.bin.gz \
+	--set-section-flags=.image=contents,alloc,load,readonly,data
+
+if [ -r $workdir/initrd.gz ]; then
+	$OBJCOPY -O elf32-powerpc $workdir/image.o $workdir/image.o \
+		--add-section=.ramdisk=$workdir/initrd.gz \
+		--set-section-flags=.ramdisk=contents,alloc,load,readonly,data
+else
+	RMSECT="-R .ramdisk"
+fi
+
+# link everything into the final image file and make it bootable
+zImage=$workdir/zImage.${arch}
+LD_ARGS="-T $libdir/ld.script"
+OBJCOPY_ARGS="-R .comment"
+is_yes "$verbose" && echo "=== Creating bootable kernel image file zImage.$arch..."
+case "$arch" in
+	chrp)
+		LD_ARGS="$LD_ARGS -e _start -Ttext 0x00800000"
+		
+		$LD $LD_ARGS -o $zImage $OBJS $workdir/image.o $LIBS || err $?
+		$OBJCOPY $OBJCOPY_ARGS $zImage $zImage || err $?
+		# shouldn't be done only for rs6k ?
+		# workaround: ADDNOTE=echo mkvmlinux [args]
+		$ADDNOTE $zImage
+		;;
+    coff)
+		LD_ARGS="$LD_ARGS -e _start -Ttext 0x00500000 -Bstatic"
+		OBJCOPY_ARGS="-O aixcoff-rs6000 -R .stab -R .stabstr $OBJCOPY_ARGS"
+		
+		$LD -o $zImage $LD_ARGS $OBJS $workdir/image.o $LIBS || err $?
+		$OBJCOPY $OBJCOPY_ARGS $zImage $zImage || err $?
+		$HACKCOFF $zImage
+		;;
+    newworld)
+		LD_ARGS="$LD_ARGS -e _start -Ttext 0x01000000"
+		OBJCOPY_ARGS="--add-section=.note=$workdir/note $OBJCOPY_ARGS"
+		$MKNOTE > $workdir/note
+		
+		$LD -o $zImage $LD_ARGS $OBJS $LIBS $workdir/image.o || err $?
+		$OBJCOPY $OBJCOPY_ARGS $zImage $zImage || err $?
+		;;
+    ppcbug)
+		LD_ARGS="$LD_ARGS -Ttext 0x00800000 -Bstatic"
+		OBJCOPY_ARGS="-O elf32-powerpc $OBJCOPY_ARGS -R .stab -R .stabstr -R .sysmap $RMSECT"
+		
+		$LD $LD_ARGS -o $zImage $OBJS $workdir/image.o $LIBS || err $?
+		$OBJCOPY $OBJCOPY_ARGS $zImage $zImage.tmp || err $?
+		$MKBUGBOOT $zImage.tmp $zImage || err $?
+		;;
+	prep)
+		LD_ARGS="$LD_ARGS -Ttext 0x00800000 -Bstatic"
+		OBJCOPY_ARGS="-O elf32-powerpc $OBJCOPY_ARGS -R .stab -R .stabstr -R .sysmap $RMSECT"
+		
+		$LD $LD_ARGS -o $zImage $OBJS $workdir/image.o $LIBS || err $?
+		$OBJCOPY $OBJCOPY_ARGS $zImage $zImage.tmp || err $?
+		$MKPREP -pbp $zImage.tmp $zImage || err $?
+		;;
+esac
+
+# move bootable kernel image to its final location
+if [ -r "$zImage" ]; then
+    is_yes "$verbose" && echo "=== Moving bootable kernel image file to $output..."
+    cat $zImage > $output && \
+		echo "*** kernel saved in $output succesfully ***" || \
+		err 21
+	ERROR=0
+else
+	err 30
+fi
+
+# clean up
+is_yes "$verbose" && echo "=== Cleaning up..."
+rm -rf $workdir
+
+exit $ERROR
+
+# vi:syntax=sh:ts=4:sw=4
