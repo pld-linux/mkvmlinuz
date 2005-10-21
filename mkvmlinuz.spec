@@ -20,6 +20,8 @@ Script for creating bootable kernel with included initrd for PowerPCs.
 Skrypt do tworzenia bootowalnych j±der z za³±czonym initrd dla
 PowerPC.
 
+%prep
+
 %install
 rm -rf $RPM_BUILD_ROOT
 install -d $RPM_BUILD_ROOT{%{_sbindir},/etc/sysconfig}
