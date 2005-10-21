@@ -10,7 +10,7 @@
 usage() {
 	cat << EOF
 usage: $(basename $0) [options] <output-image> <kernel-version>
-(ex: $(basename $0) /boot/zImage-2.6.13.3-1.pmac 2.6.13.3-1)  
+(ex: $(basename $0) /boot/zImage-2.6.13.3-1.pmac 2.6.13.3-1)
 
 <output-image>   - path to output file for compressed kernel image
 <kernel-version> - kernel version-release
@@ -103,7 +103,7 @@ while [ -n "$1" ]; do
 				version=$1
 			else
 				usage
-			fi				
+			fi
 			;;
 	esac
 	shift
@@ -207,7 +207,7 @@ case "$arch" in
 		;;
 	*)
 		error 20 "Unrecognized arch $arch"
-		;;	
+		;;
 esac
 
 # create a work directory
@@ -246,10 +246,11 @@ if [ "$arch" = "miboot" ]; then
 		cat $workdir/image.o > $output && \
 			echo "*** kernel saved in $output succesfully ***" || \
 			err 21
-			
+		
 		is_yes "$verbose" && echo "=== Cleaning up..."
 		rm -rf $workdir
-	fi						
+	fi
+	exit
 fi
 
 RMSECT=
