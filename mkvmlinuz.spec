@@ -1,7 +1,7 @@
 Summary:	Script for creating bootable kernel with included initrd for PowerPCs
 Summary(pl):	Skrypt do tworzenia bootowalnych j±der z za³±czonym initrd dla PowerPC
 Name:		mkvmlinuz
-Version:	1.2
+Version:	1.3
 Release:	1
 License:	GPL
 Group:		Applications/System
