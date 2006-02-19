@@ -140,7 +140,7 @@ fi
 is_yes "$verbose" && echo "=== Building for sub-architecture $arch."
 
 # if no kernel was specified, try to find one
-[ -z "$vmlinux" ] && vmlinux=/boot/vmlinux-$version
+[ -z "$vmlinux" ] && vmlinux=/boot/vmlinuz-$version
 [ -r "$vmlinux" ] || error 3 "vmlinux \`$vmlinux' is not readable"
 is_yes "$verbose" && echo "=== Using kernel image file $vmlinux."
 
